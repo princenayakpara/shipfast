@@ -19,7 +19,35 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { name, repoUrl, repoName, packageJson } = req.body
+    let { name, repoUrl, repoName, packageJson } = req.body
+    
+    // Extract exact owner/repo format for GitHub API validation
+    let githubApiUrl = ''
+    if (repoUrl) {
+      try {
+        const urlObj = new URL(repoUrl)
+        if (urlObj.hostname !== 'github.com') {
+          return res.status(400).json({ error: 'Only GitHub repositories are supported currently.' })
+        }
+        const pathname = urlObj.pathname.replace(/^\/|\/$/g, '').replace(/\.git$/, '')
+        const parts = pathname.split('/')
+        if (parts.length < 2) {
+          return res.status(400).json({ error: 'Invalid GitHub URL format.' })
+        }
+        
+        repoName = parts[1]
+        githubApiUrl = `https://api.github.com/repos/${parts[0]}/${parts[1]}`
+        
+        // Validate repo exists and is public
+        const githubRes = await fetch(githubApiUrl)
+        if (!githubRes.ok) {
+          return res.status(400).json({ error: 'GitHub repository not found or is private.' })
+        }
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid repository URL.' })
+      }
+    }
+
     const project = await Project.create({
       userId: req.user._id,
       name: name || 'Untitled Project',
