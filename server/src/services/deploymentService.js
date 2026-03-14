@@ -56,10 +56,21 @@ export async function runDeployment(projectId, options = {}) {
     await Project.findByIdAndUpdate(projectId, { framework })
     await logToDb(`Detected framework: ${framework}`)
 
-    // 3. Install Dependencies
+    // 3. Prepare Environment Variables
+    const projectEnv = (project.envVars || []).reduce((acc, curr) => {
+      acc[curr.key] = curr.value
+      return acc
+    }, {})
+    
+    const execaOptions = {
+      cwd: deployPath,
+      env: { ...process.env, ...projectEnv }
+    }
+
+    // 4. Install Dependencies
     await logToDb(`Installing dependencies...`, 'info')
     if (framework !== 'Python' && framework !== 'static') {
-      const installProcess = execa('npm', ['install'], { cwd: deployPath })
+      const installProcess = execa('npm', ['install'], execaOptions)
       
       installProcess.stdout.on('data', data => logToDb(data.toString().trim(), 'info'))
       installProcess.stderr.on('data', data => logToDb(data.toString().trim(), 'warn'))
@@ -68,11 +79,11 @@ export async function runDeployment(projectId, options = {}) {
       await logToDb('Dependencies installed.')
     }
 
-    // 4. Build Project
+    // 5. Build Project
     if (buildCommand) {
       await logToDb(`Running build command: ${buildCommand}`)
       const [cmd, ...args] = buildCommand.split(' ')
-      const buildProcess = execa(cmd, args, { cwd: deployPath })
+      const buildProcess = execa(cmd, args, execaOptions)
       
       buildProcess.stdout.on('data', data => logToDb(data.toString().trim(), 'info'))
       buildProcess.stderr.on('data', data => logToDb(data.toString().trim(), 'warn'))
