@@ -2,7 +2,7 @@ import express from 'express'
 import { authMiddleware } from '../middleware/auth.js'
 import Project from '../models/Project.js'
 import Deployment from '../models/Deployment.js'
-import { runDeployment } from '../services/deploymentSimulator.js'
+import { runDeployment } from '../services/deploymentService.js'
 import { detectFramework } from '../services/frameworkDetector.js'
 
 const router = express.Router()
