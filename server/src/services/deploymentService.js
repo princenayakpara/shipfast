@@ -52,7 +52,7 @@ export async function runDeployment(projectId, options = {}) {
       packageJson = await fs.readJson(pkgPath)
     }
     
-    const { framework, buildCommand } = detectFramework(packageJson, project.repoName)
+    const { framework, buildCommand, startCommand, outputDir } = detectFramework(packageJson, project.repoName)
     await Project.findByIdAndUpdate(projectId, { framework })
     await logToDb(`Detected framework: ${framework}`)
 
@@ -62,15 +62,13 @@ export async function runDeployment(projectId, options = {}) {
       return acc
     }, {})
     
-    const execaOptions = {
-      cwd: deployPath,
-      env: { ...process.env, ...projectEnv }
-    }
-
     // 4. Install Dependencies
     await logToDb(`Installing dependencies...`, 'info')
     if (framework !== 'Python' && framework !== 'static') {
-      const installProcess = execa('npm', ['install'], execaOptions)
+      const installProcess = execa('npm', ['install'], {
+        cwd: deployPath,
+        env: { ...process.env, ...projectEnv }
+      })
       
       installProcess.stdout.on('data', data => logToDb(data.toString().trim(), 'info'))
       installProcess.stderr.on('data', data => logToDb(data.toString().trim(), 'warn'))
@@ -83,7 +81,10 @@ export async function runDeployment(projectId, options = {}) {
     if (buildCommand) {
       await logToDb(`Running build command: ${buildCommand}`)
       const [cmd, ...args] = buildCommand.split(' ')
-      const buildProcess = execa(cmd, args, execaOptions)
+      const buildProcess = execa(cmd, args, {
+        cwd: deployPath,
+        env: { ...process.env, ...projectEnv }
+      })
       
       buildProcess.stdout.on('data', data => logToDb(data.toString().trim(), 'info'))
       buildProcess.stderr.on('data', data => logToDb(data.toString().trim(), 'warn'))
@@ -94,18 +95,39 @@ export async function runDeployment(projectId, options = {}) {
       await logToDb('No build command required for this framework.')
     }
 
-    // 5. Port Finder & Start Process
+    // 6. Port Finder & Start Process
     await logToDb(`Deploying to edge...`, 'info')
     await Deployment.findByIdAndUpdate(deployment._id, { status: 'deploying' })
     
+    // Find open port starting from 3005
     const openPort = await portfinder.getPortPromise({ port: 3005 })
     const generatedUrl = `${BASE_URL}${openPort}`
     
-    // Simulate process start and mapping to the dynamic port
-    // In a real isolated environment (like Docker container per user), you would spawn the process and leave it running.
-    // For MVP, we will simulate the running stage since leaving stray Node processes hanging can crash the dev environment.
     await logToDb(`Assigned port: ${openPort}`)
     await logToDb(`Starting application server...`)
+
+    let childProcess
+    if (startCommand) {
+      // Node.js or Python API
+      const [cmd, ...args] = startCommand.split(' ')
+      childProcess = execa(cmd, args, {
+        cwd: deployPath,
+        env: { ...process.env, ...projectEnv, PORT: openPort.toString() },
+        detached: true,
+        stdio: 'ignore'
+      })
+    } else {
+      // Static framework (React, Vue, etc) - use npx serve
+      childProcess = execa('npx', ['-y', 'serve', '-s', outputDir, '-l', openPort.toString()], {
+        cwd: deployPath,
+        env: { ...process.env, ...projectEnv },
+        detached: true,
+        stdio: 'ignore'
+      })
+    }
+
+    // Detach process so it runs in background independently of the request
+    childProcess.unref()
 
     const buildTimeMs = Date.now() - start
     
